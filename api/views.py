@@ -1,136 +1,239 @@
-from rest_framework import generics, filters #Importo generics per le view predefinite e filters per la ricerca
-from rest_framework.views import APIView #Importo APIView per creare view personalizzate
-from rest_framework.response import Response #Importo Response per restituire risposte HTTP
-from rest_framework.permissions import IsAuthenticated, AllowAny #Importo i permessi predefiniti di DRF
-from rest_framework_simplejwt.tokens import RefreshToken #Importo RefreshToken per generare i token JWT
-from django.contrib.auth.models import User #Importo il modello User built-in di Django
+from rest_framework import generics, filters
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
+from rest_framework.parsers import MultiPartParser, FormParser  # ✅ BONUS: per upload immagine
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.models import User
+from django.db.models import Sum, Count  # ✅ BONUS: aggregazioni per statistiche
+from django.utils import timezone        # ✅ BONUS: data odierna per incasso giornaliero
+import os
 
-from .models import Categoria, Prodotto, Ordine #Importo i modelli definiti nella nostra app
-from .serializers import ( #Importo i serializer definiti nella nostra app
+from .models import Categoria, Prodotto, Ordine, OrdineProdotto
+from .serializers import (
     CategoriaSerializer, ProdottoSerializer,
     OrdineSerializer, UserSerializer
 )
-from .permissions import IsAdminOrReadOnly, IsOwnerOrAdmin #Importo i permessi personalizzati definiti nella nostra app
+from .permissions import IsAdminOrReadOnly, IsOwnerOrAdmin
 
 
-#Auth
+# ─── Auth ─────────────────────────────────────────────────────────────────────
 
-class RegisterView(APIView): #View per la registrazione di un nuovo utente
-    permission_classes = [AllowAny] #Permetto l'accesso a tutti senza autenticazione
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
 
-    def post(self, request): #Metodo chiamato quando arriva una richiesta POST
-        username = request.data.get('username') #Estraggo il campo username dal body della richiesta
-        password = request.data.get('password') #Estraggo il campo password dal body della richiesta
-        email = request.data.get('email', '') #Estraggo il campo email dal body della richiesta, opzionale
+    def post(self, request):
+        username = request.data.get('username')
+        password = request.data.get('password')
+        email = request.data.get('email', '')
 
-        if not username or not password: #Controllo che username e password siano presenti
-            return Response({'error': 'Username e password obbligatori'}, status=400) #Restituisco errore 400 se mancano
+        if not username or not password:
+            return Response({'error': 'Username e password obbligatori'}, status=400)
 
-        if User.objects.filter(username=username).exists(): #Controllo se esiste già un utente con questo username
-            return Response({'error': 'Username già esistente'}, status=400) #Restituisco errore 400 se username già usato
+        if User.objects.filter(username=username).exists():
+            return Response({'error': 'Username già esistente'}, status=400)
 
-        user = User.objects.create_user(username=username, password=password, email=email) #Creo il nuovo utente nel database con la password hashata
-        refresh = RefreshToken.for_user(user) #Genero i token JWT per il nuovo utente
+        user = User.objects.create_user(username=username, password=password, email=email)
+        refresh = RefreshToken.for_user(user)
 
-        return Response({ #Restituisco i dati dell'utente e i token generati
-            'user': UserSerializer(user).data, #Dati dell'utente serializzati
-            'access': str(refresh.access_token), #Token di accesso da usare nelle richieste protette
-            'refresh': str(refresh), #Token di refresh per rinnovare l'access token
-        }, status=201) #Codice 201 indica che la risorsa è stata creata con successo
-
-
-class MeView(APIView): #View per ottenere i dati dell'utente attualmente autenticato
-    permission_classes = [IsAuthenticated] #Solo gli utenti autenticati possono accedere
-
-    def get(self, request): #Metodo chiamato quando arriva una richiesta GET
-        return Response(UserSerializer(request.user).data) #Restituisco i dati dell'utente corrente serializzati
+        return Response({
+            'user': UserSerializer(user).data,
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        }, status=201)
 
 
-#Categorie
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
 
-class CategoriaListCreateView(generics.ListCreateAPIView): #View per listare tutte le categorie o crearne una nuova
-    queryset = Categoria.objects.all() #Recupero tutte le categorie dal database
-    serializer_class = CategoriaSerializer #Uso il serializer delle categorie
-    permission_classes = [IsAdminOrReadOnly] #Lettura pubblica, scrittura solo admin
-
-
-class CategoriaDetailView(generics.RetrieveUpdateDestroyAPIView): #View per ottenere, modificare o eliminare una singola categoria
-    queryset = Categoria.objects.all() #Recupero tutte le categorie dal database
-    serializer_class = CategoriaSerializer #Uso il serializer delle categorie
-    permission_classes = [IsAdminOrReadOnly] #Lettura pubblica, scrittura solo admin
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
 
 
-#Prodotti
+# ─── Categorie ────────────────────────────────────────────────────────────────
 
-class ProdottoListCreateView(generics.ListCreateAPIView): #View per listare tutti i prodotti o crearne uno nuovo
-    serializer_class = ProdottoSerializer #Uso il serializer dei prodotti
-    permission_classes = [IsAdminOrReadOnly] #Lettura pubblica, scrittura solo admin
-    filter_backends = [filters.SearchFilter] #Abilito il filtro di ricerca testuale
-    search_fields = ['nome', 'descrizione'] #Definisco i campi su cui effettuare la ricerca con ?search=
-
-    def get_queryset(self): #Metodo per personalizzare il queryset in base ai parametri della richiesta
-        queryset = Prodotto.objects.all() #Parto con tutti i prodotti
-
-        categoria = self.request.query_params.get('categoria') #Leggo il parametro ?categoria= dalla URL
-        if categoria: #Se il parametro è presente
-            queryset = queryset.filter(categoria_id=categoria) #Filtro i prodotti per categoria
-
-        disponibile = self.request.query_params.get('disponibile') #Leggo il parametro ?disponibile= dalla URL
-        if disponibile == 'true': #Se il parametro è 'true'
-            queryset = queryset.filter(disponibile=True) #Filtro solo i prodotti disponibili
-
-        return queryset #Restituisco il queryset filtrato
+class CategoriaListCreateView(generics.ListCreateAPIView):
+    queryset = Categoria.objects.all()
+    serializer_class = CategoriaSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
 
-class ProdottoDetailView(generics.RetrieveUpdateDestroyAPIView): #View per ottenere, modificare o eliminare un singolo prodotto
-    queryset = Prodotto.objects.all() #Recupero tutti i prodotti dal database
-    serializer_class = ProdottoSerializer #Uso il serializer dei prodotti
-    permission_classes = [IsAdminOrReadOnly] #Lettura pubblica, scrittura solo admin
+class CategoriaDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Categoria.objects.all()
+    serializer_class = CategoriaSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
 
-#Ordini
+# ─── Prodotti ─────────────────────────────────────────────────────────────────
 
-class OrdineListCreateView(generics.ListCreateAPIView): #View per listare gli ordini o crearne uno nuovo
-    serializer_class = OrdineSerializer #Uso il serializer degli ordini
-    permission_classes = [IsAuthenticated] #Solo gli utenti autenticati possono accedere
+class ProdottoListCreateView(generics.ListCreateAPIView):
+    serializer_class = ProdottoSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nome', 'descrizione']
 
-    def get_queryset(self): #Metodo per personalizzare il queryset in base al ruolo dell'utente
-        if self.request.user.is_staff: #Se l'utente è admin
-            return Ordine.objects.all() #Restituisco tutti gli ordini
-        return Ordine.objects.filter(utente=self.request.user) #Altrimenti restituisco solo gli ordini dell'utente corrente
-
-    def perform_create(self, serializer): #Metodo chiamato automaticamente durante la creazione di un ordine
-        serializer.save(utente=self.request.user) #Assegno automaticamente l'utente loggato come proprietario dell'ordine
-
-
-class OrdineDetailView(generics.RetrieveAPIView): #View per ottenere il dettaglio di un singolo ordine
-    serializer_class = OrdineSerializer #Uso il serializer degli ordini
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin] #Solo autenticati e solo se proprietari o admin
-
-    def get_queryset(self): #Metodo per personalizzare il queryset in base al ruolo dell'utente
-        if self.request.user.is_staff: #Se l'utente è admin
-            return Ordine.objects.all() #Restituisco tutti gli ordini
-        return Ordine.objects.filter(utente=self.request.user) #Altrimenti restituisco solo gli ordini dell'utente corrente
+    def get_queryset(self):
+        queryset = Prodotto.objects.all()
+        categoria = self.request.query_params.get('categoria')
+        if categoria:
+            queryset = queryset.filter(categoria_id=categoria)
+        disponibile = self.request.query_params.get('disponibile')
+        if disponibile == 'true':
+            queryset = queryset.filter(disponibile=True)
+        return queryset
 
 
-class OrdineStatoView(APIView): #View personalizzata per aggiornare lo stato di un ordine
-    permission_classes = [IsAuthenticated] #Solo gli utenti autenticati possono accedere
+class ProdottoDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Prodotto.objects.all()
+    serializer_class = ProdottoSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
-    def patch(self, request, pk): #Metodo chiamato quando arriva una richiesta PATCH
-        if not request.user.is_staff: #Controllo se l'utente è admin
-            return Response({'error': 'Solo gli admin possono cambiare lo stato'}, status=403) #Restituisco errore 403 se non è admin
 
+# ✅ BONUS: upload immagine prodotto
+# POST /api/prodotti/{id}/immagine/  — multipart/form-data, campo "immagine"
+# Richiede autenticazione JWT + is_staff=True
+class ProdottoImmagineView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
         try:
-            ordine = Ordine.objects.get(pk=pk) #Cerco l'ordine nel database tramite il suo ID
-        except Ordine.DoesNotExist: #Se l'ordine non esiste
-            return Response({'error': 'Ordine non trovato'}, status=404) #Restituisco errore 404
+            prodotto = Prodotto.objects.get(pk=pk)
+        except Prodotto.DoesNotExist:
+            return Response({'error': 'Prodotto non trovato'}, status=404)
 
-        nuovo_stato = request.data.get('stato') #Estraggo il nuovo stato dal body della richiesta
-        stati_validi = ['in_attesa', 'in_preparazione', 'completato', 'annullato'] #Lista degli stati ammessi
+        file = request.FILES.get('immagine')
+        if not file:
+            return Response({'error': 'Nessun file ricevuto. Usa il campo "immagine".'}, status=400)
 
-        if nuovo_stato not in stati_validi: #Controllo che lo stato inviato sia tra quelli validi
-            return Response({'error': f'Stato non valido. Scegli tra: {stati_validi}'}, status=400) #Restituisco errore 400 se lo stato non è valido
+        estensioni_ammesse = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+        _, estensione = os.path.splitext(file.name.lower())
+        if estensione not in estensioni_ammesse:
+            return Response({
+                'error': f'Formato non supportato. Ammessi: {", ".join(estensioni_ammesse)}'
+            }, status=400)
 
-        ordine.stato = nuovo_stato #Aggiorno lo stato dell'ordine
-        ordine.save() #Salvo le modifiche nel database
-        return Response(OrdineSerializer(ordine).data) #Restituisco l'ordine aggiornato serializzato
+        from django.core.files.storage import default_storage
+        from django.core.files.base import ContentFile
+
+        # Salvo il file come media/prodotti/prodotto_<id>_<nomeoriginale>
+        nome_file = f'prodotti/prodotto_{pk}_{file.name}'
+        percorso = default_storage.save(nome_file, ContentFile(file.read()))
+        url = default_storage.url(percorso)
+
+        prodotto.immagine_url = url
+        prodotto.save()
+
+        return Response({
+            'messaggio': 'Immagine caricata con successo',
+            'immagine_url': url,
+            'prodotto': ProdottoSerializer(prodotto).data,
+        }, status=200)
+
+
+# ─── Ordini ───────────────────────────────────────────────────────────────────
+
+class OrdineListCreateView(generics.ListCreateAPIView):
+    serializer_class = OrdineSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            queryset = Ordine.objects.all()
+        else:
+            queryset = Ordine.objects.filter(utente=self.request.user)
+
+        data_da = self.request.query_params.get('data_da')
+        data_a = self.request.query_params.get('data_a')
+        if data_da:
+            queryset = queryset.filter(data_ordine__date__gte=data_da)
+        if data_a:
+            queryset = queryset.filter(data_ordine__date__lte=data_a)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(utente=self.request.user)
+
+
+class OrdineDetailView(generics.RetrieveAPIView):
+    serializer_class = OrdineSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return Ordine.objects.all()
+        return Ordine.objects.filter(utente=self.request.user)
+
+
+class OrdineStatoView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def patch(self, request, pk):
+        try:
+            ordine = Ordine.objects.get(pk=pk)
+        except Ordine.DoesNotExist:
+            return Response({'error': 'Ordine non trovato'}, status=404)
+
+        nuovo_stato = request.data.get('stato')
+        stati_validi = ['in_attesa', 'in_preparazione', 'completato', 'annullato']
+        if nuovo_stato not in stati_validi:
+            return Response({'error': f'Stato non valido. Scegli tra: {stati_validi}'}, status=400)
+
+        ordine.stato = nuovo_stato
+        ordine.save()
+        return Response(OrdineSerializer(ordine).data)
+
+
+# ─── Statistiche Admin ────────────────────────────────────────────────────────
+
+# ✅ BONUS: GET /api/admin/stats/
+# Richiede JWT + is_staff=True
+# Risposta:
+#   ordini_per_stato   — conteggio ordini per ciascuno dei 4 stati
+#   prodotto_piu_venduto — prodotto con più unità totali ordinate
+#   incasso_oggi       — somma dei totali degli ordini "completato" di oggi
+class AdminStatsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        # 1. Ordini per stato
+        righe_stati = (
+            Ordine.objects
+            .values('stato')
+            .annotate(conteggio=Count('id'))
+        )
+        stato_map = {r['stato']: r['conteggio'] for r in righe_stati}
+
+        # 2. Prodotto più venduto per unità totali
+        top = (
+            OrdineProdotto.objects
+            .values('prodotto__id', 'prodotto__nome', 'prodotto__prezzo')
+            .annotate(unita_vendute=Sum('quantita'))
+            .order_by('-unita_vendute')
+            .first()
+        )
+
+        # 3. Incasso ordini completati oggi
+        oggi = timezone.now().date()
+        incasso_oggi = (
+            Ordine.objects
+            .filter(stato='completato', data_ordine__date=oggi)
+            .aggregate(totale=Sum('totale'))
+        )['totale'] or 0
+
+        return Response({
+            'ordini_per_stato': {
+                'in_attesa':        stato_map.get('in_attesa', 0),
+                'in_preparazione':  stato_map.get('in_preparazione', 0),
+                'completato':       stato_map.get('completato', 0),
+                'annullato':        stato_map.get('annullato', 0),
+            },
+            'prodotto_piu_venduto': {
+                'id':            top['prodotto__id'],
+                'nome':          top['prodotto__nome'],
+                'prezzo':        top['prodotto__prezzo'],
+                'unita_vendute': top['unita_vendute'],
+            } if top else None,
+            'incasso_oggi': round(incasso_oggi, 2),
+        })

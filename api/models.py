@@ -6,6 +6,7 @@ class Categoria(models.Model): #Definisco il modello Categoria che estende la cl
     descrizione = models.TextField(blank=True, null=True) #Campo testo lungo per la descrizione, opzionale sia nel form che nel DB
 
     class Meta: #Classe interna per configurare il comportamento del modello
+        ordering = ['id']
         managed = False #Dico a Django di non creare/modificare questa tabella, esiste già nel DB
         db_table = 'categoria' #Specifico il nome esatto della tabella nel database
 
@@ -22,6 +23,7 @@ class Prodotto(models.Model): #Definisco il modello Prodotto che estende la clas
     immagine_url = models.CharField(max_length=500, blank=True, null=True) #Campo testo per l'URL dell'immagine, opzionale
 
     class Meta: #Classe interna per configurare il comportamento del modello
+        ordering = ['id']
         managed = False #Dico a Django di non creare/modificare questa tabella, esiste già nel DB
         db_table = 'prodotto' #Specifico il nome esatto della tabella nel database
 
@@ -43,6 +45,7 @@ class Ordine(models.Model): #Definisco il modello Ordine che estende la classe b
     note = models.TextField(blank=True, null=True) #Campo testo per note speciali sull'ordine, opzionale
 
     class Meta: #Classe interna per configurare il comportamento del modello
+        ordering = ['id']
         managed = False #Dico a Django di non creare/modificare questa tabella, esiste già nel DB
         db_table = 'ordine' #Specifico il nome esatto della tabella nel database
 
@@ -56,5 +59,6 @@ class OrdineProdotto(models.Model): #Definisco il modello OrdineProdotto, tabell
     quantita = models.IntegerField() #Campo intero per la quantità del prodotto nell'ordine
 
     class Meta: #Classe interna per configurare il comportamento del modello
+        ordering = ['id']
         managed = False #Dico a Django di non creare/modificare questa tabella, esiste già nel DB
         db_table = 'ordine_prodotto' #Specifico il nome esatto della tabella ponte nel database
