@@ -1,24 +1,22 @@
-from rest_framework.permissions import BasePermission, IsAdminUser, SAFE_METHODS
+from rest_framework.permissions import BasePermission, IsAdminUser, SAFE_METHODS  #Importo classi e costanti per i permessi
 
 
-class IsAdminOrReadOnly(BasePermission):
-    """Lettura pubblica (GET, HEAD, OPTIONS). Scrittura solo per is_staff=True."""
+class IsAdminOrReadOnly(BasePermission):  #Definisco permesso personalizzato admin o sola lettura
+    """Lettura pubblica (GET, HEAD, OPTIONS). Scrittura solo per is_staff=True."""  #Descrizione comportamento permesso
 
-    def has_permission(self, request, view):
-        if request.method in SAFE_METHODS:
-            return True
-        return request.user and request.user.is_staff
-
-
-class IsOwnerOrAdmin(BasePermission):
-    """Accesso all'oggetto solo al proprietario o agli admin."""
-
-    def has_object_permission(self, request, view, obj):
-        if request.user.is_staff:
-            return True
-        return obj.utente == request.user
+    def has_permission(self, request, view):  #Definisco controllo permessi a livello di view
+        if request.method in SAFE_METHODS:  #Se è una richiesta di sola lettura
+            return True  #Consento accesso
+        return request.user and request.user.is_staff  #Altrimenti consento solo se admin
 
 
-# ✅ FIX: ri-esporto IsAdminUser da DRF così la view lo importa da un unico punto
-# (evita di fare il controllo is_staff manualmente nella view)
-IsAdminUser = IsAdminUser
+class IsOwnerOrAdmin(BasePermission):  #Definisco permesso per proprietario o admin
+    """Accesso all'oggetto solo al proprietario o agli admin."""  #Descrizione permesso
+
+    def has_object_permission(self, request, view, obj):  #Controllo accesso al singolo oggetto
+        if request.user.is_staff:  #Se l'utente è admin
+            return True  #Consento sempre accesso
+        return obj.utente == request.user  #Altrimenti controllo proprietà dell'oggetto
+
+
+IsAdminUser = IsAdminUser  #Rinomino o rialloco IsAdminUser (ridondante, non necessario ma mantenuto)

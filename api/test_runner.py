@@ -1,22 +1,8 @@
-"""
-Custom test runner per Gattini Cafe API.
-
-Problema: i modelli Categoria, Prodotto, Ordine, OrdineProdotto hanno
-managed = False, quindi Django non li crea nel DB di test.
-
-Soluzione: sovrascriviamo setup_databases() per creare le tabelle
-con SQL raw PRIMA che i test partano, disabilitando temporaneamente
-i foreign key check di SQLite (richiesto dallo schema editor di Django).
-
-Configurazione in settings.py:
-    TEST_RUNNER = 'api.test_runner.UnmanagedTablesTestRunner'
-"""
-
-from django.test.runner import DiscoverRunner
-from django.db import connection
+from django.test.runner import DiscoverRunner  #Importo il test runner base di Django
+from django.db import connection  #Importo la connessione al database
 
 
-CREATE_STATEMENTS = [
+CREATE_STATEMENTS = [  #Definisco le query SQL per creare tabelle
     """
     CREATE TABLE IF NOT EXISTS categoria (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +41,7 @@ CREATE_STATEMENTS = [
     """,
 ]
 
-DROP_STATEMENTS = [
+DROP_STATEMENTS = [  #Definisco le query SQL per eliminare le tabelle
     "DROP TABLE IF EXISTS ordine_prodotto",
     "DROP TABLE IF EXISTS ordine",
     "DROP TABLE IF EXISTS prodotto",
@@ -63,31 +49,29 @@ DROP_STATEMENTS = [
 ]
 
 
-class UnmanagedTablesTestRunner(DiscoverRunner):
+class UnmanagedTablesTestRunner(DiscoverRunner):  #Definisco un test runner personalizzato
+
     """
     Test runner che crea/distrugge le tabelle unmanaged
     attorno all'intera suite di test.
     """
 
-    def setup_databases(self, **kwargs):
-        # Prima chiama il setup standard (crea il DB di test con le tabelle managed)
-        result = super().setup_databases(**kwargs)
+    def setup_databases(self, **kwargs):  #Override setup database di test
+        result = super().setup_databases(**kwargs)  #Eseguo setup standard Django
 
-        # Poi crea le nostre tabelle unmanaged via SQL raw
-        # PRAGMA foreign_keys = OFF non serve perché usiamo IF NOT EXISTS
-        # e creiamo nell'ordine corretto (padre prima del figlio)
-        with connection.cursor() as cursor:
-            for sql in CREATE_STATEMENTS:
-                cursor.execute(sql)
+        with connection.cursor() as cursor:  #Apro cursore database
+            for sql in CREATE_STATEMENTS:  #Itero query di creazione
+                cursor.execute(sql)  #Eseguo creazione tabella
 
-        return result
+        return result  #Ritorno configurazione database
 
-    def teardown_databases(self, old_config, **kwargs):
-        # Rimuove le tabelle unmanaged prima che Django distrugga il DB di test
-        with connection.cursor() as cursor:
-            cursor.execute("PRAGMA foreign_keys = OFF")
-            for sql in DROP_STATEMENTS:
-                cursor.execute(sql)
-            cursor.execute("PRAGMA foreign_keys = ON")
+    def teardown_databases(self, old_config, **kwargs):  #Override teardown database
+        with connection.cursor() as cursor:  #Apro cursore database
+            cursor.execute("PRAGMA foreign_keys = OFF")  #Disabilito vincoli foreign key
 
-        super().teardown_databases(old_config, **kwargs)
+            for sql in DROP_STATEMENTS:  #Itero query di drop
+                cursor.execute(sql)  #Elimino tabella
+
+            cursor.execute("PRAGMA foreign_keys = ON")  #Riabilito foreign key
+
+        super().teardown_databases(old_config, **kwargs)  #Chiamo teardown standard Django
